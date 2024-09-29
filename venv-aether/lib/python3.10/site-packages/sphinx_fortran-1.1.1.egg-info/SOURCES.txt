@@ -1,0 +1,14 @@
+LICENSE.txt
+MANIFEST.in
+README.rst
+requirements.txt
+setup.cfg
+setup.py
+sphinx_fortran.egg-info/PKG-INFO
+sphinx_fortran.egg-info/SOURCES.txt
+sphinx_fortran.egg-info/dependency_links.txt
+sphinx_fortran.egg-info/requires.txt
+sphinx_fortran.egg-info/top_level.txt
+sphinxfortran/__init__.py
+sphinxfortran/fortran_autodoc.py
+sphinxfortran/fortran_domain.py
