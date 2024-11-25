@@ -76,9 +76,6 @@ contains
          current_vol,Pcw,ppl_current,pptrans,prev_flow,ptrans_frc, &
          sum_dpmus,sum_dpmus_ei,time,totalc,Tpass,ttime,volume_tree,WOBe,WOBr, &
          WOBe_insp,WOBr_insp,WOB_insp
-   
-    real , allocatable :: compliance(:)
-
     character :: expiration_type*(10) ! active (sine wave), passive, pressure
     logical :: CONTINUE,converged
 
@@ -98,9 +95,6 @@ contains
     sum_tidal = 0.0_dp ! initialise the inspired and expired volumes
     sum_expid = 0.0_dp
     last_vol = 0.0_dp
-
-    allocate(compliance(num_elems))
-    compliance = 0.0_dp
 
 !!! set default values for the parameters that control the breathing simulation
 !!! these should be controlled by user input (showing hard-coded for now)
@@ -136,8 +130,6 @@ contains
     write(*,'('' Total lung volume    = '',F8.3,'' L'')') &
          init_vol/1.0e+6_dp !in L
 
-   write (*,*) 'The order of the tranchea is', elem_ordrs(no_Hord,1)
-
     unit_field(nu_dpdt,1:num_units) = 0.0_dp
 
 !!! calculate the compliance of each tissue unit
@@ -153,12 +145,6 @@ contains
     call write_flow_step_results(chest_wall_compliance,init_vol, &
          current_vol,ppl_current,pptrans,Pcw,p_mus,0.0_dp,0.0_dp)
     
-    call calc_initial_compliance(compliance) ! Get initial compliance from first breath output
-    call unstrained_radius(ppl_current,compliance) ! get R_0 for all the elements 
-
-   !  do ne = 1, 50 ! Sanity check outputs
-   !    write (*,*) 'elem', ne,'comp:', compliance(ne), 'R0:', elem_field(ne_unstrained_radius,ne)
-   !enddo 
 
     continue = .true.
     do while (continue)
@@ -200,12 +186,13 @@ contains
                pptrans,press_in_total,prev_flow,ptrans_frc,sum_dpmus,sum_dpmus_ei, &
                sum_expid,sum_tidal,texpn,time,tinsp,ttime,undef,WOBe,WOBr, &
                WOBe_insp,WOBr_insp,WOB_insp,expiration_type, &
-               dpmus,converged,iter_step, compliance)
+               dpmus,converged,iter_step,step, P_elem, elem_vol)
 !!!.......update the estimate of pleural pressure
           call update_pleural_pressure(ppl_current) ! new pleural pressure
-          call update_radius(ppl_current, 0.7_dp, compliance)
+           
           call write_flow_step_results(chest_wall_compliance,init_vol, &
                current_vol,ppl_current,pptrans,Pcw,p_mus,time,ttime)
+         !call testing(step)
        enddo !while time<endtime
        
 !!!....check whether simulation continues
@@ -213,7 +200,7 @@ contains
 
     enddo !...WHILE(CONTINUE)
    
-    call write_end_of_breath(init_vol,current_vol,pmus_factor_in,pmus_step, &
+   call write_end_of_breath(init_vol,current_vol,pmus_factor_in,pmus_step, &
          sum_expid,sum_tidal,volume_target,WOBe_insp,WOBr_insp,WOB_insp)
 
 
@@ -229,6 +216,7 @@ contains
     elem_field(ne_Vdot,1:num_elems) = &
          elem_field(ne_Vdot,1:num_elems)/elem_field(ne_Vdot,1)
 
+    call calc_initial_compliance(P_elem,elem_vol,init_compliance) ! Get initial compliance from first breath outputs
 
 !    call export_terminal_solution(TERMINAL_EXNODEFILE,'terminals')
 
@@ -243,9 +231,9 @@ contains
        pmus_factor_ex,pmus_factor_in,pmus_step,p_mus,ppl_current,pptrans, &
        press_in_total,prev_flow,ptrans_frc,sum_dpmus,sum_dpmus_ei,sum_expid, &
        sum_tidal,texpn,time,tinsp,ttime,undef,WOBe,WOBr,WOBe_insp,WOBr_insp, &
-       WOB_insp,expiration_type,dpmus,converged,iter_step,compliance)
+       WOB_insp,expiration_type,dpmus,converged,iter_step,step, P_elem, elem_vol)
 
-    integer,intent(in) :: num_itns
+    integer,intent(in) :: num_itns, step
     real(dp),intent(in) :: chest_wall_compliance,chestwall_restvol,dt, &
          err_tol,init_vol,pmus_factor_ex,pmus_factor_in,pmus_step,pptrans, &
          press_in_total,ptrans_frc,texpn,time,tinsp,ttime,undef
@@ -258,7 +246,6 @@ contains
     real(dp) :: dpmus,err_est,totalC,Tpass,volume_tree
     logical :: converged
     character(len=60) :: sub_name
-    real, dimension(:) :: compliance
 
     ! --------------------------------------------------------------------------
 
@@ -336,6 +323,21 @@ contains
 
   end subroutine evaluate_vent_step
 
+!!!#############################################################################
+
+ subroutine testing(step)
+
+ integer :: np1, np2
+ integer, intent(in) :: step
+ character(len=60) :: sub_name
+ real, dimension(240,61360) :: P_elem
+! --------------------------------------------------------------------------
+!Look at pressure in random element at every time step
+   np1 = elem_nodes(1,82) 
+   np2 = elem_nodes(2,82)
+   write(*,*) 'step num', step, 'pressure in element ', P_elem(step,82)
+
+end subroutine testing 
 !!!############################################################################# 
 
   subroutine evaluate_uniform_flow
@@ -689,31 +691,35 @@ contains
 
 !!!#############################################################################
 
-subroutine calc_initial_compliance(compliance)
+
+subroutine calc_initial_compliance(P_elem,elem_vol,init_compliance)
 
    character(len=60) :: sub_name
-   real, dimension(:):: compliance
-   integer :: ne, np1, np2, order
-   real (dp) :: P_trach, k, trach_compliance
+   real, dimension(240,num_elems), intent(in):: P_elem,elem_vol
+   real, dimension(num_elems), intent(out):: init_compliance
+   integer :: ne
+   real (dp) :: change_in_press, change_in_vol
       
 !--------------------------------------------------------------------------
 
    sub_name = 'calc_initial_compliance'
    call enter_exit(sub_name, 1)
 
-! The following if from 'Spatial Orientation and Mechanical Properties of the Human Trachea: A Computed Tomography Study' DOI: 10.4187/respcare.03479. 
-! Pressure dependant range from 0.004-0.0113 mL/cm H2O/cm take average and convert to (mL/Pa/cm)
-! 0.00007785 (mL/Pa) per cm 
- 
-   trach_compliance = 0.00007785_dp*(elem_field(ne_length,1) / 10_dp) ! Convert ne_length in mm to cm --> mL/Pa
-   ! get trach_compliance = 0.00025459136844330573
+!Loop to discover initial complaince of each element via C = deltaV/deltaP (where the delta is the difference between time steps)
+!Take the difference in vol and pressure betweeen step 2 (row 1) and height of inspiration at step 40 (row 2). 
 
-      do ne = 1,num_elems 
-       order = elem_ordrs(no_sord,ne) !get Strahler order 
-       k = 3.7_dp! decay rate k solved with desmoes 
-       !compliance(ne) =  trach_compliance 
-       compliance(ne)= exp(-k*order + 0.5_dp) + trach_compliance! Scale compliance down the airways (increases down the airways)
-      enddo
+   do ne = 1, num_elems ! Loop through elements
+      change_in_vol = elem_vol(2,ne) - elem_vol(1,ne)  
+      change_in_press =  P_elem(2,ne) - P_elem(1,ne)
+
+      if (change_in_press == 0.0_dp) then
+         print *,'Change in pressure is zero at element ', ne
+      else
+         init_compliance(ne) = change_in_vol/change_in_press
+      endif 
+   enddo
+   
+   write(*,*) 'compliance', init_compliance(1:10)
 
    call enter_exit(sub_name, 2)
 
@@ -722,30 +728,31 @@ end subroutine calc_initial_compliance
 
 !!#############################################################################
 
-subroutine unstrained_radius(ppl_current, compliance)
+subroutine unstrained_radius(ppl_current, step, init_compliance, P_elem)
 
    real(dp), intent(in) :: ppl_current
-   real, dimension(:), intent(in):: compliance
+   real, dimension(num_elems), intent(in):: init_compliance
+   real, dimension(240,num_elems), intent(in):: P_elem
    real(dp) :: P_transmural
-   integer :: ne, order, np1, np2
+   integer :: ne, order
+   integer, intent(in) :: step
    character(len=60) :: sub_name
-   real (dp) :: P_elem, ne_unstrained_radius
+   real (dp) :: ne_unstrained_radius
 
 !--------------------------------------------------------------------------
 
    sub_name = 'unstrained_radius'
+
+ 
    call enter_exit(sub_name, 1)
 
    do ne = 1,num_elems ! Loop through each element to calculate unstrained radius of element 
-
-       np1 = elem_nodes(1,ne) ! Retrive the nodes attached to each element 
-       np2 = elem_nodes(2,ne)
-
-       P_elem = (node_field(nj_aw_press,np2) + node_field(nj_aw_press,np1) ) / 2.0_dp ! !pressure in element =  pressure at each end / 2 ---> !P_elem = (P_node1 + P_node2 )/ 2 
+   
       ! Calculate the transmural pressure experienced by the element = difference bewtween the pressure inside the element and the plural pressure (converted to cmH20 from pascal with /98.0665_dp)
-       P_transmural = P_elem - ppl_current
-       elem_field(ne_unstrained_radius, ne) =  elem_field(ne_radius, ne) /(1 +  compliance(ne)*P_transmural) !Find unstrained radius with initial compliance and transmural pressure of elemenet
-  
+      P_transmural = P_elem(step,ne) - ppl_current !P_elem/98.0665_dp - ppl_current/98.0665_dp
+      order = elem_ordrs(no_hord,ne) ! Extract order of element 
+      elem_field(ne_unstrained_radius, ne) =  (1 +  init_compliance(ne)*P_transmural) / elem_field(ne_radius, ne)
+      ! Find unstrained radius with initial compliance and transmural pressure of elemenet
 
     enddo
 
@@ -753,49 +760,7 @@ subroutine unstrained_radius(ppl_current, compliance)
 
 end subroutine unstrained_radius
 
-! !!!#############################################################################
-
-subroutine update_radius(ppl_current, stiffness_factor, compliance)
-
-   real(dp), intent(in) :: ppl_current, stiffness_factor
-   real(dp) :: P_transmural, compliance_of_elem , P_elem,ne_unstrained_radius
-   integer :: ne, np1, np2
-   character(len=60) :: sub_name
-   real, dimension(:), intent(in) :: compliance
-
-!--------------------------------------------------------------------------
-
-   sub_name = 'update_radius'
-   call enter_exit(sub_name, 1)
- 
-   do ne = 1,num_elems ! Loop through each element
-      
-      ! Retrive the nodes attached to each element 
-       np1 = elem_nodes(1,ne) 
-       np2 = elem_nodes(2,ne)
-
-!pressure in element =  pressure at each end / 2 
-!P_elem = (P_node1 + P_node2 )/ 2 
-       P_elem = (node_field(nj_aw_press,np2) + node_field(nj_aw_press,np1) ) / 2.0_dp
-! Calculate the transmural pressure experienced by the element = difference bewtween the pressure inside the element and the plural pressure (converted to cmH20 from pascal with /98.0665_dp)
-       P_transmural = P_elem - ppl_current
-      compliance_of_elem = (1.0_dp - stiffness_factor) * compliance(ne) !compliance of element = stiffness scaling factor * starting total model compliance (0.8 in this case)
-      elem_field(ne_radius, ne) =  elem_field(ne_unstrained_radius, ne) * (1 + compliance_of_elem * P_transmural)!  ! Update the radius using compliance and transmural pressure of elemenet
-       
-       !Sanity check
-      !  if (ne == 1000) then 
-      !  write(*,*) 'radius of elem 1000 is', elem_field(ne_radius, 1000), 'unstrained rad:', &
-      !  elem_field(ne_unstrained_radius, 1), &
-      !  'P_tm:',P_transmural, 'factor', (1 + compliance_of_elem * P_transmural), 'pressure:', P_elem
-      !  endif
-
-    enddo
-      
-    call enter_exit(sub_name, 2)
-
-end subroutine update_radius
-
-! !!!#############################################################################
+! !!!#############################################################################atable,
 
   subroutine update_resistance
 

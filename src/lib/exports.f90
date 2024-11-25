@@ -377,6 +377,7 @@ contains
        write(10,'(1X,''Element: '',I12,'' 0 0'' )') elems(ne)
        write(10,'(3X,''Values:'' )')
        write(10,'(4X,2(1X,E12.5))') elem_field(ne_field,ne),elem_field(ne_field,ne)
+       !write(10,'(2X,''Strahler order:'', I12)') elem_ordrs(no_sord,ne)
     enddo !no_nelist (ne)
     close(10)
 
@@ -794,7 +795,7 @@ contains
        !**     write the group name
        write(10,'( '' Group name: '',A)') name(:len_end)
        FIRST_NODE=.TRUE.
-       np_last=1
+         np_last=1
        !*** Exporting Terminal Solution
        do nolist=1,num_units
           if(nolist.GT.1) np_last = np
@@ -822,10 +823,10 @@ contains
              !write(10,'(2X,''1.  '')',advance="no")
              !write(10,'(''Value index='',I1,'', #Derivatives='',I1)',advance="yes") VALUE_INDEX,0
              !VALUE_INDEX=VALUE_INDEX+1
-             !!Pressure
-             !write(10,'('' 4) pressure, field, rectangular cartesian, #Components=1'')')
-             !write(10,'(2X,''1.  '')',advance="no")
-             !write(10,'(''Value index='',I1,'', #Derivatives='',I1)',advance="yes") VALUE_INDEX,0
+             !Pressure
+             write(10,'('' 4) pressure, field, rectangular cartesian, #Components=1'')')
+             write(10,'(2X,''1.  '')',advance="no")
+             write(10,'(''Value index='',I1,'', #Derivatives='',I1)',advance="yes") VALUE_INDEX,0
              !Compliance
              write(10,'('' 5) compliance, field, rectangular cartesian, #Components=1'')')
              write(10,'(2X,''1.  '')',advance="no")
@@ -840,6 +841,7 @@ contains
              write(10,'('' 7) tidal volume, field, rectangular cartesian, #Components=1'')')
              write(10,'(2X,''1.  '')',advance="no")
              write(10,'(''Value index='',I1,'', #Derivatives='',I1)',advance="yes") VALUE_INDEX,0
+
           endif !FIRST_NODE
           !***      write the node
           write(10,'(1X,''Node: '',I12)') np
@@ -848,7 +850,7 @@ contains
           enddo !njj2
           write(10,'(2X,4(1X,F12.6))') (unit_field(nu_vent,NOLIST)) !Ventilation
           !write(10,'(2X,4(1X,F12.6))') (unit_field(nu_vol,nolist))   !Volume (end expiration)
-          !write(10,'(2X,4(1X,F12.6))') (unit_field(nu_press,nolist)) !Pressure
+          write(10,'(2X,4(1X,F12.6))') (unit_field(nu_air_press,nolist)) !Pressure
           write(10,'(2X,4(1X,F12.6))') (unit_field(nu_comp,nolist))  !Compliance (end exp)
           write(10,'(2X,4(1X,F12.6))') (unit_field(nu_pe,nolist))    !Recoil pressure
           write(10,'(2X,4(1X,F12.6))') (unit_field(nu_vt,nolist))    !Tidal volume
