@@ -35,17 +35,17 @@ from __future__ import with_statement
 
 import sys
 # python2 - Deprecated in python 2.7+
-import imp
-try:
-    imp.find_module('argparse')
-    found = True
-except ImportError:
-    found = False
+#import imp
+#try:
+#    imp.find_module('argparse')
+#    found = True
+#except ImportError:
+#    found = False
 
 # Preferred for python 2.7+, python 3
-# import importlib
-# argparse_loader = importlib.find_loader('argparse')
-# found = argparse_loader is not None
+import importlib.util
+argparse_loader = importlib.util.find_spec('argparse')
+found = argparse_loader is not None
 
 if found:    
     import argparse

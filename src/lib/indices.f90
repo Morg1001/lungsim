@@ -28,11 +28,11 @@ module indices
        ne_resist=0,ne_t_resist=0,ne_Vdot=0,ne_Vdot0=0,ne_a_A=0,&
        ne_dvdt=0,ne_radius_in=0,ne_radius_in0=0,&
        ne_radius_out=0,ne_radius_out0=0,ne_group=0,ne_Qdot=0, &
-       ne_vd_bel=0, ne_vol_bel=0, ne_unstrained_radius = 0 
+       ne_vd_bel=0, ne_vol_bel=0, ne_unstrained_radius = 0 , ne_ppl = 0
   ! indices for unit_field
   integer :: num_nu,nu_vol=0,nu_comp=0,nu_conc2=0,nu_Vdot0=0,nu_Vdot1=0, &
        nu_Vdot2=0,nu_dpdt=0,nu_pe=0,nu_vt=0,nu_air_press=0,nu_conc1=0,nu_vent=0,&
-       nu_vd=0,nu_perf=0,nu_blood_press=0
+       nu_vd=0,nu_perf=0,nu_blood_press=0, nu_ppl =0 
   !indices for gas exchange field
   ! indices for gasex_field
   integer,parameter :: num_gx = 12
@@ -232,6 +232,7 @@ contains
     ne_vd_bel = 9
     ne_vol_bel = 10
     ne_unstrained_radius = 12 ! Radius(unstrained)
+    ne_ppl = 13 ! local plural pressure to element 
     
     ! indices for unit_field
     num_nu=10
@@ -245,6 +246,7 @@ contains
     nu_vt=8
     nu_air_press=9
     nu_vent=10
+    nu_ppl = 11
     call enter_exit(sub_name,2)
   end subroutine ventilation_indices
 

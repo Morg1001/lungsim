@@ -121,7 +121,6 @@ contains
     call update_elem_field(1.0_dp)
     call update_resistance
     call volume_of_mesh(init_vol,volume_tree)
-    call unstrained_radius! Get radii at FRC --> 'Unstrained radius' 
     
 !!! distribute the initial tissue unit volumes along the gravitational axis.
     call set_initial_volume(gdirn,COV,FRC*1.0e+6_dp,RMaxMean,RMinMean)
@@ -153,11 +152,9 @@ contains
         
     call write_flow_step_results(chest_wall_compliance,init_vol, &
          current_vol,ppl_current,pptrans,Pcw,p_mus,0.0_dp,0.0_dp)
-
-    !call calc_alpha_compliance(compliance) !Generate complaince with scaling factor 
-    call calc_initial_compliance(compliance, 20000_dp) ! Get initial compliance from first breath output, with healthy Youngs modulus (fibrosis dependant)
-    ! Healthy lung Young's mod is range 1-5 kPa --> Take average 3kPa from Hinz 2012
-    ! Average Fibrotic Lung --> 17kPa from Wells R. G. (2013) Tissue mechanics and fibrosis.
+    
+    call calc_initial_compliance(compliance) ! Get initial compliance from first breath output
+    call unstrained_radius(ppl_current,compliance) ! get R_0 for all the elements 
 
    !  do ne = 1, 50 ! Sanity check outputs
    !    write (*,*) 'elem', ne,'comp:', compliance(ne), 'R0:', elem_field(ne_unstrained_radius,ne)
@@ -174,7 +171,7 @@ contains
        if(n.gt.1)then !write out 'end of breath' information
           call write_end_of_breath(init_vol,current_vol,pmus_factor_in, &
                pmus_step,sum_expid,sum_tidal,volume_target,WOBe_insp, &
-               WOBr_insp,WOB_insp, WOBe, ppl_current)
+               WOBr_insp,WOB_insp, WOBe)
           
           if(abs(volume_target).gt.1.0e-5_dp)THEN
              ! modify driving muscle pressure by volume_target/sum_tidal
@@ -204,10 +201,9 @@ contains
                sum_expid,sum_tidal,texpn,time,tinsp,ttime,undef,WOBe,WOBr, &
                WOBe_insp,WOBr_insp,WOB_insp,expiration_type, &
                dpmus,converged,iter_step, compliance)
-!!!.......update the estimate of pleural pressure and radius 
+!!!.......update the estimate of pleural pressure
           call update_pleural_pressure(ppl_current) ! new pleural pressure
-          call get_elem_ppl ! Need to get airway plural pressures before update_radius
-          !call update_radius(compliance)
+          call update_radius(ppl_current, 0.0_dp, compliance)
           call write_flow_step_results(chest_wall_compliance,init_vol, &
                current_vol,ppl_current,pptrans,Pcw,p_mus,time,ttime)
        enddo !while time<endtime
@@ -218,7 +214,7 @@ contains
     enddo !...WHILE(CONTINUE)
    
     call write_end_of_breath(init_vol,current_vol,pmus_factor_in,pmus_step, &
-         sum_expid,sum_tidal,volume_target,WOBe_insp,WOBr_insp,WOB_insp, WOBe, ppl_current)
+         sum_expid,sum_tidal,volume_target,WOBe_insp,WOBr_insp,WOB_insp, WOBe)
 
 
 !!! Transfer the tidal volume for each elastic unit to the terminal branches,
@@ -492,7 +488,6 @@ contains
     ! current Pel (=Ptp) and Palv, i.e. Ppl(unit) = -Pel(unit)+Palv(unit)
 
     real(dp),intent(out) :: ppl_current
-    real(dp) :: nu_ppl
     ! Local variables
     integer :: ne,np2,nunit
     character(len=60) :: sub_name
@@ -506,11 +501,9 @@ contains
     do nunit = 1,num_units
        ne = units(nunit)
        np2 = elem_nodes(2,ne)
-       unit_field(nu_ppl,nunit) = node_field(nj_aw_press,np2)- unit_field(nu_pe,nunit) ! Added to store ppl in each unit 
        ppl_current = ppl_current - unit_field(nu_pe,nunit) + &
             node_field(nj_aw_press,np2)
     enddo !noelem
-
     ppl_current = ppl_current/num_units
 
     call enter_exit(sub_name,2)
@@ -695,66 +688,8 @@ contains
   end subroutine update_elem_field
 
 !!!#############################################################################
-  subroutine get_elem_ppl
 
-    integer :: ne,np1,np2, np3, radius, num_closest_units, ne_unit, i , nunit
-    real(dp) :: del_x, del_y, del_z, d ! Radius and difference/delta between unit and element x,y,z coordiantes 
-    character(len=60) :: sub_name
-    real(dp) :: ne_ppl, total 
-    real(dp) :: mid_point_location(3)
-    integer, allocatable :: closest_units(:)
-    ! --------------------------------------------------------------------------
-
-    sub_name = 'get_elem_ppl'
-    call enter_exit(sub_name,1)
-
-    radius = 20.0_dp !1cm
-    allocate(closest_units(num_units))
-
-    do ne = 1,num_elems !Iterate over all the elements in the airway tree
-       np1 = elem_nodes(1,ne)
-       np2 = elem_nodes(2,ne)
-      ! The the x,y,z coordinates of the midpoint of the element 
-       mid_point_location(1) = (node_xyz(1,np2) + node_xyz(1,np1))/2  
-       mid_point_location(2) = (node_xyz(2,np2) + node_xyz(2,np1))/2 
-       mid_point_location(3) = (node_xyz(3,np2) + node_xyz(3,np1))/2 
-
-      ! reset counter
-       num_closest_units = 0  ! Reset counter for units within radius 
-
-      do nunit = 1,num_units !Iterate through units
-         ne_unit = units(nunit) !Get element that supplies the unit
-         np3 = elem_nodes(2,ne_unit) ! Get the proximal node to the unit 
-         del_x = node_xyz(1,np3) - mid_point_location(1) !get distance between elem and node x coords
-         del_y = node_xyz(2,np3) - mid_point_location(2) !get distance between elem and node y coords
-         del_z  = node_xyz(3,np3) - mid_point_location(3) !get distance between elem and node z coords
-         d = SQRT( del_x**2 + del_y**2 + del_z**2 ) !!get distance between elem and node
-
-         IF (d<= radius) THEN ! Check if that node is within set radius of airway elemnt midpoint 
-            closest_units(num_closest_units) = nunit !populate an array of the all the units within the radius of the airway
-            num_closest_units = num_closest_units + 1 ! Keep number of units  within the radius
-         END IF  
-
-      enddo !End unit 
-      total = 0 
-      do i = 1, num_closest_units
-         total = total + unit_field(nu_ppl, closest_units(i)) ! Add up the plural pressures of the closest units to the elem in questions
-      enddo ! End elem 
-      
-      IF (num_closest_units == 0.0_dp) THEN
-         write(*, '(1X, ''no close units:'', I12)')ne
-      ELSE
-         elem_field(ne_ppl,ne) =  total/ num_closest_units !Get the average plural pessure of the closest units. 
-      endif
-
-    enddo 
-
-    call enter_exit(sub_name,2)
-
-  end subroutine get_elem_ppl
-
-!!!#############################################################################
-subroutine calc_alpha_compliance(compliance)
+subroutine calc_initial_compliance(compliance)
 
    character(len=60) :: sub_name
    real, dimension(:):: compliance
@@ -763,7 +698,7 @@ subroutine calc_alpha_compliance(compliance)
       
 !--------------------------------------------------------------------------
 
-   sub_name = 'calc_alpha_compliance'
+   sub_name = 'calc_initial_compliance'
    call enter_exit(sub_name, 1)
 
 ! The following if from 'Spatial Orientation and Mechanical Properties of the Human Trachea: A Computed Tomography Study' DOI: 10.4187/respcare.03479. 
@@ -784,48 +719,18 @@ subroutine calc_alpha_compliance(compliance)
    call enter_exit(sub_name, 2)
 
 
-end subroutine calc_alpha_compliance
-
-!!#############################################################################
-
-subroutine calc_initial_compliance(compliance, youngs_modulus)
-
-   character(len=60) :: sub_name
-   real, dimension(:):: compliance
-   integer :: ne, np1, np2, order
-   integer(8), intent(in) :: youngs_modulus ! Dependant on degree of fibrosis, therefore a changable input with remodelling stage. 
-   real (dp) :: h , ne_unstrained_radius 
-   REAL, DIMENSION(27) :: WT = [ 0.11494717_dp, 0.11026357_dp, 0.104975_dp, 0.09916252_dp, 0.09291877_dp, &
-    0.08634797_dp, 0.078383_dp, 0.07053488_dp, 0.06202213_dp, 0.053828_dp, &
-    0.04577317_dp, 0.03912653_dp, 0.03469973_dp, 0.03392588_dp, 0.03883148_dp, &
-    0.05287052_dp, 0.07929488_dp, 0.125188_dp, 0.19683677_dp, 0.30618332_dp, &
-    0.46869677_dp, 0.70497232_dp, 1.04188925_dp, 1.520692_dp, 2.18901893_dp, &
-    3.12097957_dp, 4.40964272_dp ]
- ! WT from Himanshu data email 17/12/2024
-!--------------------------------------------------------------------------
-
-   sub_name = 'calc_initial_compliance'
-   call enter_exit(sub_name, 1)
-
-      do ne = 1,num_elems 
-       order = elem_ordrs(no_hord,ne) !get Horsfield order which corresponds to row of WT
-       h = WT(order)
-       compliance(ne)= ( 3.0_dp *  elem_field(ne_unstrained_radius, ne) ) / ( 4.0_dp * youngs_modulus * h ) 
-       !Defined in Equation 2 of Ebrahimi et al 2021 'A computational model of contributors to pulmonary hypertensive disease: impacts of whole lung and focal disease distributions'
-      enddo
-
-   call enter_exit(sub_name, 2)
-
-
 end subroutine calc_initial_compliance
 
 !!#############################################################################
 
-subroutine unstrained_radius ! Called before breath simulation --> Get radii at FRC --> Unstrained radius 
+subroutine unstrained_radius(ppl_current, compliance)
 
-   integer :: ne
+   real(dp), intent(in) :: ppl_current
+   real, dimension(:), intent(in):: compliance
+   real(dp) :: P_transmural
+   integer :: ne, order, np1, np2
    character(len=60) :: sub_name
-   real (dp) :: ne_unstrained_radius
+   real (dp) :: P_elem, ne_unstrained_radius
 
 !--------------------------------------------------------------------------
 
@@ -833,7 +738,16 @@ subroutine unstrained_radius ! Called before breath simulation --> Get radii at 
    call enter_exit(sub_name, 1)
 
    do ne = 1,num_elems ! Loop through each element to calculate unstrained radius of element 
-       elem_field(ne_unstrained_radius, ne) =  elem_field(ne_radius, ne) 
+
+       np1 = elem_nodes(1,ne) ! Retrive the nodes attached to each element 
+       np2 = elem_nodes(2,ne)
+
+       P_elem = (node_field(nj_aw_press,np2) + node_field(nj_aw_press,np1) ) / 2.0_dp ! !pressure in element =  pressure at each end / 2 ---> !P_elem = (P_node1 + P_node2 )/ 2 
+      ! Calculate the transmural pressure experienced by the element = difference bewtween the pressure inside the element and the plural pressure 
+       P_transmural = P_elem - ppl_current
+       elem_field(ne_unstrained_radius, ne) =  elem_field(ne_radius, ne) /(1 +  compliance(ne)*P_transmural) !Find unstrained radius with initial compliance and transmural pressure of elemenet
+  
+
     enddo
 
     call enter_exit(sub_name, 2)
@@ -842,9 +756,10 @@ end subroutine unstrained_radius
 
 ! !!!#############################################################################
 
-subroutine update_radius(compliance)
+subroutine update_radius(ppl_current, stiffness_factor, compliance)
 
-   real(dp) :: P_transmural, P_elem, ne_unstrained_radius, ne_ppl
+   real(dp), intent(in) :: ppl_current, stiffness_factor
+   real(dp) :: P_transmural, compliance_of_elem , P_elem,ne_unstrained_radius
    integer :: ne, np1, np2
    character(len=60) :: sub_name
    real, dimension(:), intent(in) :: compliance
@@ -863,9 +778,17 @@ subroutine update_radius(compliance)
 !pressure in element =  pressure at each end / 2 
 !P_elem = (P_node1 + P_node2 )/ 2 
        P_elem = (node_field(nj_aw_press,np2) + node_field(nj_aw_press,np1) ) / 2.0_dp
-! Calculate the transmural pressure experienced by the element = difference bewtween the pressure inside the element and the plural pressure 
-       P_transmural = P_elem - elem_field(ne_ppl, ne)
-       elem_field(ne_radius, ne) =  elem_field(ne_unstrained_radius, ne) * (1 + compliance(ne) * P_transmural)!  ! Update the radius using compliance and transmural pressure of elemenet
+! Calculate the transmural pressure experienced by the element = difference bewtween the pressure inside the element and the plural pressure (converted to cmH20 from pascal with /98.0665_dp)
+       P_transmural = P_elem - ppl_current
+       compliance_of_elem = (1.0_dp - stiffness_factor) * compliance(ne) !compliance of element = stiffness scaling factor * starting total model compliance (0.8 in this case)
+       elem_field(ne_radius, ne) =  elem_field(ne_unstrained_radius, ne) * (1 + compliance_of_elem * P_transmural)!  ! Update the radius using compliance and transmural pressure of elemenet
+       
+       !Sanity check
+      !  if (ne == 1000) then 
+      !  write(*,*) 'radius of elem 1000 is', elem_field(ne_radius, 1000), 'unstrained rad:', &
+      !  elem_field(ne_unstrained_radius, 1), &
+      !  'P_tm:',P_transmural, 'factor', (1 + compliance_of_elem * P_transmural), 'pressure:', P_elem
+      !  endif
 
     enddo
       
@@ -1318,13 +1241,12 @@ end subroutine update_radius
 !!!#############################################################################
 
   subroutine write_end_of_breath(init_vol,current_vol,pmus_factor_in, &
-       pmus_step,sum_expid,sum_tidal,volume_target,WOBe_insp,WOBr_insp,WOB_insp, WOBe, ppl_current)
+       pmus_step,sum_expid,sum_tidal,volume_target,WOBe_insp,WOBr_insp,WOB_insp, WOBe)
 
     real(dp),intent(in) :: init_vol,current_vol,pmus_factor_in,pmus_step, &
-         sum_expid,sum_tidal,volume_target,WOBe_insp,WOBr_insp,WOB_insp, WOBe, ppl_current
-
+         sum_expid,sum_tidal,volume_target,WOBe_insp,WOBr_insp,WOB_insp, WOBe
     ! Local variables
-    real(dp) ::ne_unstrained_radius
+    real(dp) ::  trach_compliance
     character(len=60) :: sub_name
 
     ! --------------------------------------------------------------------------
@@ -1343,13 +1265,11 @@ end subroutine update_radius
     write(*,'('' Difference from target Vt = '',F8.2,'' %'')') &
          100*(volume_target-sum_tidal)/volume_target
     write(*,'('' Total Work of Breathing ='',F7.3,''J/min'')')WOB_insp
-    write(*,'('' elastic WOB ='',F7.3,''J/min'')')WOBe_insp
+    write(*,'('' insp elastic WOB ='',F7.3,''J/min'')')WOBe_insp
     write(*,'('' resistive WOB='',F7.3,''J/min'')')WOBr_insp
-    write(*,'('' Unstrained Radius of Trachea='',F7.3,''mm'')')elem_field(ne_unstrained_radius, 1)
-    write(*,'('' Length of Trachea='',F7.3,''mm'')')elem_field(ne_length, 1)
-    write(*,'('' Resistance of Trachea='',F11.9,''Pa.s.mm^3'')')elem_field(ne_t_resist, 1)
-    write(*, '(''Current Ppl:'' , F10.5)')ppl_current/98.0665_dp
-
+    write(*,'('' Trachea Compliance='',F7.5,''mm^3/Pa'')')trach_compliance
+    write(*,'('' Trachea length='',F7.4,''mm'')')elem_field(ne_length,1)
+          
     call enter_exit(sub_name,2)
 
   end subroutine write_end_of_breath
